@@ -11,6 +11,8 @@ android {
         targetSdkVersion 21
         versionCode 1
         versionName "1.0"
+
+
     }
     buildTypes {
         release {
@@ -19,7 +21,8 @@ android {
         }
     }
     buildTypes.each {
-        it.buildConfigField 'String', 'OPEN_WEATHER_MAP_API_KEY', MyOpenWeatherMapApiKey
+      it.buildConfigField 'String', 'OPEN_WEATHER_MAP_API_KEY', MyOpenWeatherMapApiKey
+
     }
 }
 
