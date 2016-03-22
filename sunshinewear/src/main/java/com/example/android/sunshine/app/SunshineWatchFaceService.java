@@ -14,7 +14,7 @@
  * limitations under the License.
  */
 
-package com.fourthwardmobile.sunshinewear;
+package com.example.android.sunshine.app;
 
 import android.content.BroadcastReceiver;
 import android.content.Context;
@@ -26,17 +26,25 @@ import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
+import android.net.Uri;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
 import android.support.wearable.watchface.CanvasWatchFaceService;
 import android.support.wearable.watchface.WatchFaceStyle;
 import android.text.format.Time;
+import android.util.Log;
 import android.view.SurfaceHolder;
 import android.view.WindowInsets;
 
+import com.example.android.sunshine.app.R;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.DataEvent;
+import com.google.android.gms.wearable.DataEventBuffer;
+import com.google.android.gms.wearable.DataMap;
+import com.google.android.gms.wearable.DataMapItem;
 import com.google.android.gms.wearable.Wearable;
 
 import java.lang.ref.WeakReference;
@@ -58,7 +66,7 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
      * displayed in interactive mode.
      */
     private static final long INTERACTIVE_UPDATE_RATE_MS = TimeUnit.SECONDS.toMillis(1);
-
+    final String TAG = SunshineWatchFaceService.class.getSimpleName();
     /**
      * Handler message id for updating the time periodically in interactive mode.
      */
@@ -91,7 +99,11 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
 
     private class Engine extends CanvasWatchFaceService.Engine implements
             GoogleApiClient.ConnectionCallbacks,
-            GoogleApiClient.OnConnectionFailedListener{
+            GoogleApiClient.OnConnectionFailedListener,
+            DataApi.DataListener{
+
+
+
         final Handler mUpdateTimeHandler = new EngineHandler(this);
         boolean mRegisteredTimeZoneReceiver = false;
         Paint mBackgroundPaint;
@@ -127,6 +139,16 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
         float mHightTempXOffset;
         float mLowTempXOffset;
 
+        //High and Low temps
+        String mHighTemp = "";
+        String mLowTemp = "";
+
+        private static final String TEMP_PATH = "/temp";
+        private static final String HIGH_TEMP_KEY = "hightemp";
+        private static final String LOW_TEMP_KEY = "lowtemp";
+        private static final String IMAGE_KEY = "forecast_icon";
+
+        private static final String DATA_ITEM_RECEIVED_PATH = "/data-item-received";
 
         /**
          * Whether the display supports fewer bits for each color in ambient mode. When true, we
@@ -139,7 +161,7 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
         @Override
         public void onCreate(SurfaceHolder holder) {
             super.onCreate(holder);
-
+            Log.e(TAG,"---- onCreate() ----");
             setWatchFaceStyle(new WatchFaceStyle.Builder(SunshineWatchFaceService.this)
                     .setCardPeekMode(WatchFaceStyle.PEEK_MODE_VARIABLE)
                     .setBackgroundVisibility(WatchFaceStyle.BACKGROUND_VISIBILITY_INTERRUPTIVE)
@@ -352,11 +374,11 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
             float centerX = bounds.width() / 2f;
             canvas.drawLine(centerX - 30,mLineY,centerX + 30,mLineY,mLinePaint);
 
-            String highStr = "70" + "\u00B0";
-            String lowStr = "52" + "\u00B0";
+           // String highStr = "72" + "\u00B0";
+           // String lowStr = "54" + "\u00B0";
 
-            canvas.drawText(highStr,mHightTempXOffset,mTempYOffset,mTempPaint);
-            canvas.drawText(lowStr,mLowTempXOffset,mTempYOffset,mTempPaint);
+            canvas.drawText(mHighTemp,mHightTempXOffset,mTempYOffset,mTempPaint);
+            canvas.drawText(mLowTemp,mLowTempXOffset,mTempYOffset,mTempPaint);
 
 
         }
@@ -396,6 +418,8 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
         @Override
         public void onConnected(Bundle bundle) {
 
+            Log.e(TAG,"onConnected()");
+            Wearable.DataApi.addListener(mGoogleApiClient, this);
 
         }
 
@@ -407,6 +431,48 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
         @Override
         public void onConnectionFailed(ConnectionResult connectionResult) {
 
+        }
+
+        @Override
+        public void onDataChanged(DataEventBuffer dataEvents) {
+
+            Log.e(TAG, "onDataChanged in watchface: " + dataEvents);
+//            if (!mGoogleApiClient.isConnected() || !mGoogleApiClient.isConnecting()) {
+//                ConnectionResult connectionResult = mGoogleApiClient
+//                        .blockingConnect(30, TimeUnit.SECONDS);
+//                if (!connectionResult.isSuccess()) {
+//                    Log.e(TAG, "DataLayerListenerService failed to connect to GoogleApiClient, "
+//                            + "error code: " + connectionResult.getErrorCode());
+//                    return;
+//                }
+//            }
+
+            // Loop through the events and send a message back to the node that created the data item.
+            for (DataEvent event : dataEvents) {
+                Uri uri = event.getDataItem().getUri();
+                String path = uri.getPath();
+                Log.e(TAG,"Path to data = " + path);
+                if (TEMP_PATH.equals(path)) {
+                    // Get the node id of the node that created the data item from the host portion of
+                    // the uri.
+                    String nodeId = uri.getHost();
+                    // Set the data of the message to be the bytes of the Uri.
+                    byte[] payload = uri.toString().getBytes();
+
+                    Log.e(TAG,"Pull datamap");
+                    DataMap dataMap = DataMapItem.fromDataItem(event.getDataItem()).getDataMap();
+                    Log.e(TAG, "High temp = " + dataMap.getString(HIGH_TEMP_KEY));
+                    Log.e(TAG, "Low temp = " + dataMap.getString(LOW_TEMP_KEY));
+                    // Send the rpc
+                    mHighTemp = dataMap.getString(HIGH_TEMP_KEY);
+                    mLowTemp = dataMap.getString(LOW_TEMP_KEY);
+                    Wearable.MessageApi.sendMessage(mGoogleApiClient, nodeId, DATA_ITEM_RECEIVED_PATH,
+                            payload);
+
+                    //redraw watch face
+                    invalidate();
+                }
+            }
         }
     }
 }
