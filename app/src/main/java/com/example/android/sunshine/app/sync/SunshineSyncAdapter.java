@@ -36,6 +36,13 @@ import com.example.android.sunshine.app.R;
 import com.example.android.sunshine.app.Utility;
 import com.example.android.sunshine.app.data.WeatherContract;
 import com.example.android.sunshine.app.muzei.WeatherMuzeiSource;
+import com.google.android.gms.common.ConnectionResult;
+import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.wearable.DataApi;
+import com.google.android.gms.wearable.PutDataMapRequest;
+import com.google.android.gms.wearable.PutDataRequest;
+import com.google.android.gms.wearable.Wearable;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -52,16 +59,21 @@ import java.net.URL;
 import java.util.Vector;
 import java.util.concurrent.ExecutionException;
 
-public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
+public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
+        GoogleApiClient.ConnectionCallbacks,
+        GoogleApiClient.OnConnectionFailedListener {
     public final String LOG_TAG = SunshineSyncAdapter.class.getSimpleName();
     public static final String ACTION_DATA_UPDATED =
             "com.example.android.sunshine.app.ACTION_DATA_UPDATED";
     // Interval at which to sync with the weather, in seconds.
     // 60 seconds (1 minute) * 180 = 3 hours
-    public static final int SYNC_INTERVAL = 60 * 180;
+    public static final int SYNC_INTERVAL = 60; //* 180;
     public static final int SYNC_FLEXTIME = SYNC_INTERVAL/3;
     private static final long DAY_IN_MILLIS = 1000 * 60 * 60 * 24;
     private static final int WEATHER_NOTIFICATION_ID = 3004;
+
+    //Google API Client to send data to wearables
+    private GoogleApiClient mGoogleApiClient;
 
 
     private static final String[] NOTIFY_WEATHER_PROJECTION = new String[] {
@@ -87,13 +99,18 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
     public static final int LOCATION_STATUS_UNKNOWN = 3;
     public static final int LOCATION_STATUS_INVALID = 4;
 
+    private static final String TEMP_PATH = "/temp";
+    private static final String HIGH_TEMP_KEY = "hightemp";
+    private static final String LOW_TEMP_KEY = "lowtemp";
+    private static final String IMAGE_KEY = "forecast_icon";
+
     public SunshineSyncAdapter(Context context, boolean autoInitialize) {
         super(context, autoInitialize);
     }
 
     @Override
     public void onPerformSync(Account account, Bundle extras, String authority, ContentProviderClient provider, SyncResult syncResult) {
-        Log.d(LOG_TAG, "Starting sync");
+        Log.e(LOG_TAG, "Starting sync");
         String locationQuery = Utility.getPreferredLocation(getContext());
 
         // These two need to be declared outside the try/catch
@@ -159,6 +176,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
             }
             forecastJsonStr = buffer.toString();
             getWeatherDataFromJson(forecastJsonStr, locationQuery);
+
         } catch (IOException e) {
             Log.e(LOG_TAG, "Error ", e);
             // If the code didn't successfully get the weather data, there's no point in attempting
@@ -228,6 +246,9 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
 
         final String OWM_MESSAGE_CODE = "cod";
 
+        double high;
+        double low;
+
         try {
             JSONObject forecastJson = new JSONObject(forecastJsonStr);
 
@@ -286,8 +307,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 double windSpeed;
                 double windDirection;
 
-                double high;
-                double low;
+
 
                 String description;
                 int weatherId;
@@ -330,6 +350,8 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 weatherValues.put(WeatherContract.WeatherEntry.COLUMN_WEATHER_ID, weatherId);
 
                 cVVector.add(weatherValues);
+
+
             }
 
             int inserted = 0;
@@ -342,11 +364,15 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
                 // delete old data so we don't build up an endless history
                 getContext().getContentResolver().delete(WeatherContract.WeatherEntry.CONTENT_URI,
                         WeatherContract.WeatherEntry.COLUMN_DATE + " <= ?",
-                        new String[] {Long.toString(dayTime.setJulianDay(julianStartDay-1))});
+                        new String[]{Long.toString(dayTime.setJulianDay(julianStartDay - 1))});
 
                 updateWidgets();
                 updateMuzei();
                 notifyWeather();
+                //Update wearable for the first set up data (today)
+                Log.e(LOG_TAG,"Try and update wearable");
+                updateWearable();
+
             }
             Log.d(LOG_TAG, "Sync Complete. " + cVVector.size() + " Inserted");
             setLocationStatus(getContext(), LOCATION_STATUS_OK);
@@ -483,6 +509,16 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
         }
     }
 
+    private void updateWearable() {
+
+        Log.e(LOG_TAG,"updateWearable()");
+        mGoogleApiClient = new GoogleApiClient.Builder(getContext())
+                .addApiIfAvailable(Wearable.API)
+                .addConnectionCallbacks(this)
+                .addOnConnectionFailedListener(this)
+                .build();
+        mGoogleApiClient.connect();
+    }
     /**
      * Helper method to handle insertion of a new location in the weather database.
      *
@@ -635,5 +671,68 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter {
         SharedPreferences.Editor spe = sp.edit();
         spe.putInt(c.getString(R.string.pref_location_status_key), locationStatus);
         spe.commit();
+    }
+
+    @Override
+    public void onConnected(Bundle bundle) {
+
+        Log.e(LOG_TAG,"onConnected()");
+        Context context = getContext();
+        String locationQuery = Utility.getPreferredLocation(context);
+
+        Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
+
+        // we'll query our contentProvider, as always
+        Cursor cursor = context.getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
+
+        if (cursor.moveToFirst()) {
+            double high = cursor.getDouble(INDEX_MAX_TEMP);
+            double low = cursor.getDouble(INDEX_MIN_TEMP);
+            String strHigh = Utility.formatTemperature(context, high);
+            String strLow = Utility.formatTemperature(context, low);
+                    //!!!!! TO-DO!!!!! Set Fer or Celsius based on SP setting. Returning celsius.
+                    Log.e(LOG_TAG, "Connected to Google API with high = " + strHigh
+                            + " ,low = " + strLow);
+
+            //Put together the data map with the high and low temperatures
+            PutDataMapRequest putDataMapRequest = PutDataMapRequest.create(TEMP_PATH);
+            putDataMapRequest.getDataMap().putString(HIGH_TEMP_KEY, strHigh);
+            putDataMapRequest.getDataMap().putString(LOW_TEMP_KEY, strLow);
+            putDataMapRequest.setUrgent();
+
+            //Put together the request
+            PutDataRequest request = putDataMapRequest.asPutDataRequest();
+            request.setUrgent();
+
+            Wearable.DataApi.putDataItem(mGoogleApiClient, request)
+                    .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
+                        @Override
+                        public void onResult(DataApi.DataItemResult dataItemResult) {
+
+                            if (!dataItemResult.getStatus().isSuccess()) {
+                                Log.e(LOG_TAG, "ERROR: failed to putDataItem, status code: "
+                                        + dataItemResult.getStatus().getStatusCode());
+                            }
+                            else {
+                                Log.e(LOG_TAG,"Success sending data to wearable!!");
+                            }
+                        }
+                    });
+
+
+
+        }
+    }
+
+    @Override
+    public void onConnectionSuspended(int i) {
+
+        Log.e(LOG_TAG,"onConnectionSuspended()");
+    }
+
+    @Override
+    public void onConnectionFailed(ConnectionResult connectionResult) {
+
+        Log.e(LOG_TAG,"onConnectionFailed " + connectionResult.toString());
     }
 }
