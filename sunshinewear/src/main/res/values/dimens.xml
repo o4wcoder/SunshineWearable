@@ -28,4 +28,9 @@
     <dimen name = "high_temp_x_offset_round">34dp</dimen>
     <dimen name = "low_temp_x_offset">144dp</dimen>
     <dimen name = "low_temp_x_offset_round">144dp</dimen>
+
+    <!-- icon -->
+    <!-- The width of the big icons in notifications. -->
+    <dimen name="wearable_icon_dimen">20dp</dimen>
+
 </resources>

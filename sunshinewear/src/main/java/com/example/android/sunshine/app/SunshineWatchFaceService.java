@@ -150,6 +150,9 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
         String mHighTemp = "";
         String mLowTemp = "";
 
+        //Weather Image
+        Bitmap mPhotoImage;
+
         //Keys to the data sent from the phone
         private static final String TEMP_PATH = "/temp";
         private static final String HIGH_TEMP_KEY = "hightemp";
@@ -388,6 +391,9 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
             canvas.drawText(mHighTemp,mHightTempXOffset,mTempYOffset,mTempPaint);
             canvas.drawText(mLowTemp,mLowTempXOffset,mTempYOffset,mTempPaint);
 
+            if(mPhotoImage != null)
+               canvas.drawBitmap(mPhotoImage,mHightTempXOffset + 70,mTempYOffset - 50,null);
+
 
         }
 
@@ -490,10 +496,12 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
         @Override
         public void onLoadBitmapFinished(Bitmap bitmap) {
 
-            Log.e(TAG,"onLoadBitmapFinished()! invalidate and redraw");
-            if(bitmap != null)
-                Log.e(TAG,"Bitmap not null! horray!");
+            Log.e(TAG, "onLoadBitmapFinished()! invalidate and redraw");
+            if(bitmap != null) {
+                Log.e(TAG, "Bitmap not null! horray!");
 
+                mPhotoImage = bitmap;
+            }
             invalidate();
         }
     }
