@@ -20,6 +20,7 @@ import android.database.Cursor;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Build;
 import android.os.Bundle;
 import android.preference.PreferenceManager;
@@ -39,6 +40,7 @@ import com.example.android.sunshine.app.muzei.WeatherMuzeiSource;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
 import com.google.android.gms.common.api.ResultCallback;
+import com.google.android.gms.wearable.Asset;
 import com.google.android.gms.wearable.DataApi;
 import com.google.android.gms.wearable.PutDataMapRequest;
 import com.google.android.gms.wearable.PutDataRequest;
@@ -49,6 +51,7 @@ import org.json.JSONException;
 import org.json.JSONObject;
 
 import java.io.BufferedReader;
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.InputStreamReader;
@@ -676,52 +679,8 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
     @Override
     public void onConnected(Bundle bundle) {
 
-        Log.e(LOG_TAG,"onConnected()");
-        Context context = getContext();
-        String locationQuery = Utility.getPreferredLocation(context);
-
-        Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
-
-        // we'll query our contentProvider, as always
-        Cursor cursor = context.getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
-
-        if (cursor.moveToFirst()) {
-            double high = cursor.getDouble(INDEX_MAX_TEMP);
-            double low = cursor.getDouble(INDEX_MIN_TEMP);
-            String strHigh = Utility.formatTemperature(context, high);
-            String strLow = Utility.formatTemperature(context, low);
-                    //!!!!! TO-DO!!!!! Set Fer or Celsius based on SP setting. Returning celsius.
-                    Log.e(LOG_TAG, "Connected to Google API with high = " + strHigh
-                            + " ,low = " + strLow);
-
-            //Put together the data map with the high and low temperatures
-            PutDataMapRequest putDataMapRequest = PutDataMapRequest.create(TEMP_PATH);
-            putDataMapRequest.getDataMap().putString(HIGH_TEMP_KEY, strHigh);
-            putDataMapRequest.getDataMap().putString(LOW_TEMP_KEY, strLow);
-            putDataMapRequest.setUrgent();
-
-            //Put together the request
-            PutDataRequest request = putDataMapRequest.asPutDataRequest();
-            request.setUrgent();
-
-            Wearable.DataApi.putDataItem(mGoogleApiClient, request)
-                    .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
-                        @Override
-                        public void onResult(DataApi.DataItemResult dataItemResult) {
-
-                            if (!dataItemResult.getStatus().isSuccess()) {
-                                Log.e(LOG_TAG, "ERROR: failed to putDataItem, status code: "
-                                        + dataItemResult.getStatus().getStatusCode());
-                            }
-                            else {
-                                Log.e(LOG_TAG,"Success sending data to wearable!!");
-                            }
-                        }
-                    });
-
-
-
-        }
+        Log.e(LOG_TAG,"onConnected() Start Data Task");
+        new WearableDataTask().execute();
     }
 
     @Override
@@ -734,5 +693,115 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
     public void onConnectionFailed(ConnectionResult connectionResult) {
 
         Log.e(LOG_TAG,"onConnectionFailed " + connectionResult.toString());
+    }
+
+    /**
+     * Builds an {@link com.google.android.gms.wearable.Asset} from a bitmap. The image that we get
+     * back from the camera in "data" is a thumbnail size. Typically, your image should not exceed
+     * 320x320 and if you want to have zoom and parallax effect in your app, limit the size of your
+     * image to 640x400. Resize your image before transferring to your wearable device.
+     */
+    private static Asset toAsset(Bitmap bitmap) {
+        ByteArrayOutputStream byteStream = null;
+        try {
+            byteStream = new ByteArrayOutputStream();
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, byteStream);
+            return Asset.createFromBytes(byteStream.toByteArray());
+        } finally {
+            if (null != byteStream) {
+                try {
+                    byteStream.close();
+                } catch (IOException e) {
+                    // ignore
+                }
+            }
+        }
+    }
+
+    private class WearableDataTask extends AsyncTask<Void, Void, Void> {
+
+        @Override
+        protected Void doInBackground(Void... args) {
+
+            Context context = getContext();
+            String locationQuery = Utility.getPreferredLocation(context);
+
+            Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
+
+            // we'll query our contentProvider, as always
+            Cursor cursor = context.getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
+
+            if (cursor.moveToFirst()) {
+                int weatherId = cursor.getInt(INDEX_WEATHER_ID);
+                double high = cursor.getDouble(INDEX_MAX_TEMP);
+                double low = cursor.getDouble(INDEX_MIN_TEMP);
+
+                int iconId = Utility.getIconResourceForWeatherCondition(weatherId);
+                Resources resources = context.getResources();
+                int artResourceId = Utility.getArtResourceForWeatherCondition(weatherId);
+                String artUrl = Utility.getArtUrlForWeatherCondition(context, weatherId);
+
+                String strHigh = Utility.formatTemperature(context, high);
+                String strLow = Utility.formatTemperature(context, low);
+
+                // On Honeycomb and higher devices, we can retrieve the size of the large icon
+                // Prior to that, we use a fixed size
+                @SuppressLint("InlinedApi")
+                int largeIconWidth = Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB
+                        ? resources.getDimensionPixelSize(android.R.dimen.notification_large_icon_width)
+                        : resources.getDimensionPixelSize(R.dimen.notification_large_icon_default);
+                @SuppressLint("InlinedApi")
+                int largeIconHeight = Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB
+                        ? resources.getDimensionPixelSize(android.R.dimen.notification_large_icon_height)
+                        : resources.getDimensionPixelSize(R.dimen.notification_large_icon_default);
+
+                //Get image bitmap
+                // Retrieve the large icon
+
+                Bitmap largeIcon;
+                try {
+                    largeIcon = Glide.with(context)
+                            .load(artUrl)
+                            .asBitmap()
+                            .error(artResourceId)
+                            .fitCenter()
+                            .into(largeIconWidth, largeIconHeight).get();
+                } catch (InterruptedException | ExecutionException e) {
+                    Log.e(LOG_TAG, "Error retrieving large icon from " + artUrl, e);
+                    largeIcon = BitmapFactory.decodeResource(resources, artResourceId);
+                }
+
+                //Put together the data map with the high and low temperatures
+                PutDataMapRequest putDataMapRequest = PutDataMapRequest.create(TEMP_PATH);
+                putDataMapRequest.getDataMap().putString(HIGH_TEMP_KEY, strHigh);
+                putDataMapRequest.getDataMap().putString(LOW_TEMP_KEY, strLow);
+                putDataMapRequest.getDataMap().putAsset(IMAGE_KEY,toAsset(largeIcon));
+                putDataMapRequest.setUrgent();
+
+                //Put together the request
+                PutDataRequest request = putDataMapRequest.asPutDataRequest();
+                request.setUrgent();
+
+                Wearable.DataApi.putDataItem(mGoogleApiClient, request)
+                        .setResultCallback(new ResultCallback<DataApi.DataItemResult>() {
+                            @Override
+                            public void onResult(DataApi.DataItemResult dataItemResult) {
+
+                                if (!dataItemResult.getStatus().isSuccess()) {
+                                    Log.e(LOG_TAG, "ERROR: failed to putDataItem, status code: "
+                                            + dataItemResult.getStatus().getStatusCode());
+                                }
+                                else {
+                                    Log.e(LOG_TAG,"Success sending data to wearable!!");
+                                }
+                            }
+                        });
+
+
+
+            }
+
+            return null;
+        }
     }
 }

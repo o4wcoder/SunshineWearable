@@ -21,12 +21,15 @@ import android.content.Context;
 import android.content.Intent;
 import android.content.IntentFilter;
 import android.content.res.Resources;
+import android.graphics.Bitmap;
+import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
 import android.graphics.Rect;
 import android.graphics.Typeface;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Message;
@@ -40,6 +43,7 @@ import android.view.WindowInsets;
 import com.example.android.sunshine.app.R;
 import com.google.android.gms.common.ConnectionResult;
 import com.google.android.gms.common.api.GoogleApiClient;
+import com.google.android.gms.wearable.Asset;
 import com.google.android.gms.wearable.DataApi;
 import com.google.android.gms.wearable.DataEvent;
 import com.google.android.gms.wearable.DataEventBuffer;
@@ -47,6 +51,7 @@ import com.google.android.gms.wearable.DataMap;
 import com.google.android.gms.wearable.DataMapItem;
 import com.google.android.gms.wearable.Wearable;
 
+import java.io.InputStream;
 import java.lang.ref.WeakReference;
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -71,6 +76,8 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
      * Handler message id for updating the time periodically in interactive mode.
      */
     private static final int MSG_UPDATE_TIME = 0;
+
+    GoogleApiClient mGoogleApiClient;
 
     @Override
     public Engine onCreateEngine() {
@@ -100,7 +107,7 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
     private class Engine extends CanvasWatchFaceService.Engine implements
             GoogleApiClient.ConnectionCallbacks,
             GoogleApiClient.OnConnectionFailedListener,
-            DataApi.DataListener{
+            DataApi.DataListener, OnLoadBitmapListener{
 
 
 
@@ -143,6 +150,7 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
         String mHighTemp = "";
         String mLowTemp = "";
 
+        //Keys to the data sent from the phone
         private static final String TEMP_PATH = "/temp";
         private static final String HIGH_TEMP_KEY = "hightemp";
         private static final String LOW_TEMP_KEY = "lowtemp";
@@ -156,7 +164,7 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
          */
         boolean mLowBitAmbient;
 
-        GoogleApiClient mGoogleApiClient;
+
 
         @Override
         public void onCreate(SurfaceHolder holder) {
@@ -466,13 +474,76 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
                     // Send the rpc
                     mHighTemp = dataMap.getString(HIGH_TEMP_KEY);
                     mLowTemp = dataMap.getString(LOW_TEMP_KEY);
+
+                    final Asset photoAsset = dataMap.getAsset(IMAGE_KEY);
                     Wearable.MessageApi.sendMessage(mGoogleApiClient, nodeId, DATA_ITEM_RECEIVED_PATH,
                             payload);
 
-                    //redraw watch face
-                    invalidate();
+                    new AssetToBitimapAsyncTask(this).execute(photoAsset);
+
+
+
                 }
             }
         }
+
+        @Override
+        public void onLoadBitmapFinished(Bitmap bitmap) {
+
+            Log.e(TAG,"onLoadBitmapFinished()! invalidate and redraw");
+            if(bitmap != null)
+                Log.e(TAG,"Bitmap not null! horray!");
+
+            invalidate();
+        }
+    }
+
+    private class AssetToBitimapAsyncTask extends AsyncTask<Asset, Void, Bitmap> {
+
+        private OnLoadBitmapListener listener;
+
+        public AssetToBitimapAsyncTask(OnLoadBitmapListener listener) {
+            this.listener = listener;
+        }
+        @Override
+        protected Bitmap doInBackground(Asset... params) {
+
+            if(params.length > 0) {
+
+                Asset asset = params[0];
+
+                InputStream assetInputStream = Wearable.DataApi.getFdForAsset(
+                        mGoogleApiClient, asset).await().getInputStream();
+
+                if (assetInputStream == null) {
+                    Log.w(TAG, "Requested an unknown Asset.");
+                    return null;
+                }
+                return BitmapFactory.decodeStream(assetInputStream);
+
+            } else {
+                Log.e(TAG, "Asset must be non-null");
+                return null;
+            }
+        }
+
+        @Override
+        protected void onPostExecute(Bitmap bitmap) {
+
+            if(bitmap != null) {
+                Log.e(TAG, "Created Bitmap!..");
+
+
+                listener.onLoadBitmapFinished(bitmap);
+                //redraw watch face
+              //  SunshineWatchFaceService.Engine.this.invalidate();
+            }
+        }
+
+    }
+
+    interface OnLoadBitmapListener {
+
+        void onLoadBitmapFinished(Bitmap bitmap);
     }
 }
