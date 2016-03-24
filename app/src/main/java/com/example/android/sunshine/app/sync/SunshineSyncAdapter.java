@@ -70,7 +70,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
             "com.example.android.sunshine.app.ACTION_DATA_UPDATED";
     // Interval at which to sync with the weather, in seconds.
     // 60 seconds (1 minute) * 180 = 3 hours
-    public static final int SYNC_INTERVAL = 60; //* 180;
+    public static final int SYNC_INTERVAL = 60 * 180;
     public static final int SYNC_FLEXTIME = SYNC_INTERVAL/3;
     private static final long DAY_IN_MILLIS = 1000 * 60 * 60 * 24;
     private static final int WEATHER_NOTIFICATION_ID = 3004;
@@ -84,6 +84,14 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
             WeatherContract.WeatherEntry.COLUMN_MAX_TEMP,
             WeatherContract.WeatherEntry.COLUMN_MIN_TEMP,
             WeatherContract.WeatherEntry.COLUMN_SHORT_DESC
+    };
+
+    //Projection for Wearable
+    private static final String[] WEARABLE_WEATHER_PROJECTION = new String[] {
+
+            WeatherContract.WeatherEntry.COLUMN_WEATHER_ID,
+            WeatherContract.WeatherEntry.COLUMN_MAX_TEMP,
+            WeatherContract.WeatherEntry.COLUMN_MIN_TEMP
     };
 
     // these indices must match the projection
@@ -107,19 +115,36 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
     private static final String LOW_TEMP_KEY = "lowtemp";
     private static final String IMAGE_KEY = "forecast_icon";
 
+    private boolean mUpdateWearable;
+    private boolean mIsSameLocation;
+
     public SunshineSyncAdapter(Context context, boolean autoInitialize) {
         super(context, autoInitialize);
     }
 
     @Override
     public void onPerformSync(Account account, Bundle extras, String authority, ContentProviderClient provider, SyncResult syncResult) {
-        Log.e(LOG_TAG, "Starting sync");
-        String locationQuery = Utility.getPreferredLocation(getContext());
 
+        String locationQuery = Utility.getPreferredLocation(getContext());
+        Log.e(LOG_TAG, "Starting sync at location " + locationQuery);
+        Log.e(LOG_TAG,"Location Status = " + Utility.getLocationStatus(getContext()));
+
+        //If we hae an Unknown Location status, we have changed location. We want to
+        //Update the Wearable whenever we change location, even if the temps have not changed
+        //for that location
+        if(Utility.getLocationStatus(getContext()) == LOCATION_STATUS_UNKNOWN) {
+            mIsSameLocation = false;
+        }
+        else {
+            mIsSameLocation = true;
+        }
         // These two need to be declared outside the try/catch
         // so that they can be closed in the finally block.
         HttpURLConnection urlConnection = null;
         BufferedReader reader = null;
+
+        //Reset Wearable flag
+        mUpdateWearable = false;
 
         // Will contain the raw JSON response as a string.
         String forecastJsonStr = null;
@@ -160,6 +185,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
             StringBuffer buffer = new StringBuffer();
             if (inputStream == null) {
                 // Nothing to do.
+                Log.e(LOG_TAG,"Nothing in input stream, return");
                 return;
             }
             reader = new BufferedReader(new InputStreamReader(inputStream));
@@ -252,6 +278,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
         double high;
         double low;
 
+        Log.i(LOG_TAG,"getWeatherFromJSON()");
         try {
             JSONObject forecastJson = new JSONObject(forecastJsonStr);
 
@@ -339,6 +366,11 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
                 high = temperatureObject.getDouble(OWM_MAX);
                 low = temperatureObject.getDouble(OWM_MIN);
 
+                //See if today's temperatures have changed and set flag to update wearable
+                if(i == 0) {
+                    setUpdateWearableFlag(high, low);
+                }
+
                 ContentValues weatherValues = new ContentValues();
 
                 weatherValues.put(WeatherContract.WeatherEntry.COLUMN_LOC_KEY, locationId);
@@ -372,9 +404,11 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
                 updateWidgets();
                 updateMuzei();
                 notifyWeather();
-                //Update wearable for the first set up data (today)
-                Log.e(LOG_TAG,"Try and update wearable");
-                updateWearable();
+                //Update wearable if today's weather has changed
+                if(mUpdateWearable) {
+                    Log.e(LOG_TAG, "Try and update Wearable");
+                    updateWearable();
+                }
 
             }
             Log.d(LOG_TAG, "Sync Complete. " + cVVector.size() + " Inserted");
@@ -512,6 +546,9 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
         }
     }
 
+    /**
+     * Connect to Google API Client for the the Wearable API if it is available
+     */
     private void updateWearable() {
 
         Log.e(LOG_TAG,"updateWearable()");
@@ -718,6 +755,9 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
         }
     }
 
+    /**
+     * Task to send data to the Wearable
+     */
     private class WearableDataTask extends AsyncTask<Void, Void, Void> {
 
         @Override
@@ -729,7 +769,7 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
             Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
 
             // we'll query our contentProvider, as always
-            Cursor cursor = context.getContentResolver().query(weatherUri, NOTIFY_WEATHER_PROJECTION, null, null, null);
+            Cursor cursor = context.getContentResolver().query(weatherUri, WEARABLE_WEATHER_PROJECTION, null, null, null);
 
             if (cursor.moveToFirst()) {
                 int weatherId = cursor.getInt(INDEX_WEATHER_ID);
@@ -744,21 +784,8 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
                 String strHigh = Utility.formatTemperature(context, high);
                 String strLow = Utility.formatTemperature(context, low);
 
-                // On Honeycomb and higher devices, we can retrieve the size of the large icon
-                // Prior to that, we use a fixed size
-//                @SuppressLint("InlinedApi")
-//                int largeIconWidth = Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB
-//                        ? resources.getDimensionPixelSize(android.R.dimen.notification_large_icon_width)
-//                        : resources.getDimensionPixelSize(R.dimen.notification_large_icon_default);
-//                @SuppressLint("InlinedApi")
-//                int largeIconHeight = Build.VERSION.SDK_INT >= Build.VERSION_CODES.HONEYCOMB
-//                        ? resources.getDimensionPixelSize(android.R.dimen.notification_large_icon_height)
-//                        : resources.getDimensionPixelSize(R.dimen.notification_large_icon_default);
-
                 int iconSize = resources.getDimensionPixelSize(R.dimen.wearable_icon_dimen);
                 //Get image bitmap
-                // Retrieve the large icon
-
                 Bitmap largeIcon;
                 try {
                     largeIcon = Glide.with(context)
@@ -797,12 +824,62 @@ public class SunshineSyncAdapter extends AbstractThreadedSyncAdapter implements
                                 }
                             }
                         });
-
-
-
             }
 
             return null;
         }
+    }
+
+    /**
+     * Determines if today's weather values have changed and sets a global flag accordingly. This
+     * flag is used to determine if we need to let the wearable know that today's forecast has changed
+     * or we have changed locations, and send it the new data.
+     * @param newHigh
+     * @param newLow
+     */
+    private void setUpdateWearableFlag(double newHigh, double newLow) {
+
+        Context context = getContext();
+        String locationQuery = Utility.getPreferredLocation(context);
+
+        Uri weatherUri = WeatherContract.WeatherEntry.buildWeatherLocationWithDate(locationQuery, System.currentTimeMillis());
+
+        // we'll query our contentProvider, as always
+        Cursor cursor = context.getContentResolver().query(weatherUri, WEARABLE_WEATHER_PROJECTION, null, null, null);
+
+        if (cursor.moveToFirst()) {
+            double high = cursor.getDouble(INDEX_MAX_TEMP);
+            double low = cursor.getDouble(INDEX_MIN_TEMP);
+
+            //Change to Fahrenheit or Celcius strings as there are big temp differences
+            //between the two
+            String strNewHigh = Utility.formatTemperature(getContext(),newHigh);
+            String strNewLow = Utility.formatTemperature(getContext(),newLow);
+            String strHigh = Utility.formatTemperature(getContext(),high);
+            String strLow = Utility.formatTemperature(getContext(),low);
+
+            //If we have changed location, update the wearable regardless of the temperature change
+            if(!mIsSameLocation) {
+                mUpdateWearable = true;
+                Log.i(LOG_TAG, "Location has changed to " + Utility.getPreferredLocation(getContext()) +
+                ". Update Wearable");
+            }
+            else {
+                //Compare the string format of the temps.
+                if (strHigh.equals(strNewHigh) && strLow.equals(strNewLow)) {
+                    Log.i(LOG_TAG, "Today's High and Low temps have not changed, don't update Wearable");
+                    Log.i(LOG_TAG, "Old high=" + strHigh + " New high=" + strNewHigh +
+                            ", Old low=" + strLow + " New low=" + strNewLow);
+                    mUpdateWearable = false;
+                } else {
+                    Log.i(LOG_TAG, "Today's Temperatures have changed. Old high=" + strHigh + " New high=" + strNewHigh
+                            + ", Old low=" + strLow + " New low=" + strNewLow);
+                    mUpdateWearable = true;
+                }
+            }
+
+
+        }
+
     }
 }

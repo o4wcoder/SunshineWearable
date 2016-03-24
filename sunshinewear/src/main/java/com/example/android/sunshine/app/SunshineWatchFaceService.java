@@ -64,7 +64,8 @@ import java.util.concurrent.TimeUnit;
  */
 public class SunshineWatchFaceService extends CanvasWatchFaceService {
     private static final Typeface NORMAL_TYPEFACE =
-            Typeface.create(Typeface.SANS_SERIF, Typeface.NORMAL);
+            Typeface.create(Typeface.SANS_SERIF
+                    , Typeface.NORMAL);
 
     /**
      * Update rate in milliseconds for interactive mode. We update once a second since seconds are
@@ -143,7 +144,7 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
         float mLineY;
 
         float mTempYOffset;
-        float mHightTempXOffset;
+        float mHighTempXOffset;
         float mLowTempXOffset;
 
         //High and Low temps
@@ -152,6 +153,8 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
 
         //Weather Image
         Bitmap mPhotoImage;
+        float mPhotoXOffset;
+        float mPhotoYOffset;
 
         //Keys to the data sent from the phone
         private static final String TEMP_PATH = "/temp";
@@ -212,7 +215,7 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
 
             mTime = new Time();
 
-            //Connect to Google Play Services to recieve data from the phone
+            //Connect to Google Play Services to receive data from the phone
             mGoogleApiClient = new GoogleApiClient.Builder(SunshineWatchFaceService.this)
                     .addApi(Wearable.API)
                     .addConnectionCallbacks(this)
@@ -292,7 +295,7 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
             mDateTextPaint.setTextSize(dateTextSize);
 
             //Set Temperature offsets
-            mHightTempXOffset = resources.getDimension(isRound
+            mHighTempXOffset = resources.getDimension(isRound
                     ? R.dimen.high_temp_x_offset_round : R.dimen.high_temp_x_offset);
             mLowTempXOffset = resources.getDimension(isRound
                     ? R.dimen.low_temp_x_offset_round : R.dimen.low_temp_x_offset);
@@ -300,6 +303,11 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
             float tempTextSize = resources.getDimension(isRound
                     ? R.dimen.temp_text_size_round : R.dimen.temp_text_size);
 
+            //Set Photo offsets
+            mPhotoXOffset = resources.getDimension(isRound
+            ? R.dimen.icon_x_offset_round : R.dimen.icon_x_offset);
+            mPhotoYOffset = resources.getDimension(isRound
+            ? R.dimen.icon_y_offset_round : R.dimen.icon_y_offset);
             mTempPaint.setTextSize(tempTextSize);
 
 
@@ -371,29 +379,23 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
             // Draw H:MM in ambient mode or H:MM:SS in interactive mode.
             mTime.setToNow();
 
-//            String text = mAmbient
-//                    ? String.format("%d:%02d", mTime.hour, mTime.minute)
-//                    : String.format("%d:%02d:%02d", mTime.hour, mTime.minute, mTime.second);
 
-            String text = String.format("%d:%02d", mTime.hour, mTime.minute);
+            String text = String.format("%02d:%02d", mTime.hour, mTime.minute);
+
             canvas.drawText(text, mXOffset, mYOffset, mTextPaint);
 
             Date currentDate = new Date();
             String strCurrentDate = new SimpleDateFormat("MMM d, yyyy").format(currentDate);
-            canvas.drawText(strCurrentDate,mXOffset,mDateYOffset,mDateTextPaint);
+            canvas.drawText(strCurrentDate,mDateXOffset,mDateYOffset,mDateTextPaint);
 
             float centerX = bounds.width() / 2f;
             canvas.drawLine(centerX - 30,mLineY,centerX + 30,mLineY,mLinePaint);
 
-           // String highStr = "72" + "\u00B0";
-           // String lowStr = "54" + "\u00B0";
-
-            canvas.drawText(mHighTemp,mHightTempXOffset,mTempYOffset,mTempPaint);
-            canvas.drawText(mLowTemp,mLowTempXOffset,mTempYOffset,mTempPaint);
+            canvas.drawText(mHighTemp,mHighTempXOffset,mTempYOffset,mTempPaint);
+            canvas.drawText(mLowTemp, mLowTempXOffset, mTempYOffset, mTempPaint);
 
             if(mPhotoImage != null)
-               canvas.drawBitmap(mPhotoImage,mHightTempXOffset + 70,mTempYOffset - 50,null);
-
+               canvas.drawBitmap(mPhotoImage,mPhotoXOffset,mPhotoYOffset,null);
 
         }
 
@@ -451,15 +453,6 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
         public void onDataChanged(DataEventBuffer dataEvents) {
 
             Log.e(TAG, "onDataChanged in watchface: " + dataEvents);
-//            if (!mGoogleApiClient.isConnected() || !mGoogleApiClient.isConnecting()) {
-//                ConnectionResult connectionResult = mGoogleApiClient
-//                        .blockingConnect(30, TimeUnit.SECONDS);
-//                if (!connectionResult.isSuccess()) {
-//                    Log.e(TAG, "DataLayerListenerService failed to connect to GoogleApiClient, "
-//                            + "error code: " + connectionResult.getErrorCode());
-//                    return;
-//                }
-//            }
 
             // Loop through the events and send a message back to the node that created the data item.
             for (DataEvent event : dataEvents) {
@@ -477,17 +470,17 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
                     DataMap dataMap = DataMapItem.fromDataItem(event.getDataItem()).getDataMap();
                     Log.e(TAG, "High temp = " + dataMap.getString(HIGH_TEMP_KEY));
                     Log.e(TAG, "Low temp = " + dataMap.getString(LOW_TEMP_KEY));
-                    // Send the rpc
+
                     mHighTemp = dataMap.getString(HIGH_TEMP_KEY);
                     mLowTemp = dataMap.getString(LOW_TEMP_KEY);
 
                     final Asset photoAsset = dataMap.getAsset(IMAGE_KEY);
+
+                    // Send the rpc
                     Wearable.MessageApi.sendMessage(mGoogleApiClient, nodeId, DATA_ITEM_RECEIVED_PATH,
                             payload);
 
                     new AssetToBitimapAsyncTask(this).execute(photoAsset);
-
-
 
                 }
             }
@@ -506,6 +499,9 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
         }
     }
 
+    /**
+     * Task to change Asset from the phone into a Bitmap
+     */
     private class AssetToBitimapAsyncTask extends AsyncTask<Asset, Void, Bitmap> {
 
         private OnLoadBitmapListener listener;
@@ -550,6 +546,9 @@ public class SunshineWatchFaceService extends CanvasWatchFaceService {
 
     }
 
+    /**
+     * Interface used to call back from AsyncTask to let the outer class know the Bitmap is done
+     */
     interface OnLoadBitmapListener {
 
         void onLoadBitmapFinished(Bitmap bitmap);
